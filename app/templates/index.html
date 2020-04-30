@@ -1,5 +1,263 @@
 {% extends "base.html" %}
 
+
 {% block content %}
-    <h1>Hi!</h1>
+<div class="container">
+    <!--<button class="getcoords">GET COORDINATES</button>-->
+    <div class="row">
+        <div id="mapdiv" class="col-lg-12">
+            <div id="mapid"></div>
+        </div>
+        <div id="infodiv" class="col-lg-4">
+            <div class="row">
+                 <div id="table_values">
+                </div>
+            </div>
+           <div class="row">
+                <div id="chartdiv"></div>
+           </div>
+        </div>
+    </div>
+
+</div>
+
+
 {% endblock %}
+
+{% block scripts %}
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js" type="text/javascript"></script>
+<script src="{{url_for('static', filename='js/leaflet.js')}}"></script>
+<script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
+<!--<script src="{{url_for('static', filename='js/leaflet-geoman.min.js')}}"></script>-->
+<script src="{{url_for('static', filename='js/Control.OSMGeocoder.js')}}"></script>
+<script src="{{url_for('static', filename='js/amcharts4/core.js')}}"></script>
+<script src="{{url_for('static', filename='js/amcharts4/charts.js')}}"></script>
+
+
+<script>
+  var map = L.map('mapid', {editable: true}).setView([57.153, 65.534], 13);
+  L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; <a rel="nofollow" href="http://osm.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+  const customIcon = L.divIcon({
+    className: 'iconstyle',
+    html: '<img src="/static/images/water.png" style="width:30px; height:30px" alt="">',
+    iconAnchor:[15,15]
+});
+
+    /*{#var dvcs = {{dvcs|tojson}};#}
+    obj = JSON.parse(dvcs);
+    console.log(obj);
+    console.log(obj.length);*/
+
+   map.pm.setLang('ru');
+   map.pm.addControls({
+        position: 'topleft',
+        drawCircle: false,
+        drawRectangle :false,
+        drawCircleMarker: false,
+        cutPolygon: false
+    });
+
+
+
+
+var osmGeocoder = new L.Control.OSMGeocoder({bounds: L.latLngBounds(L.latLng(57.239079, 65.349162), L.latLng(57.051594, 65.838422)), placeholder: 'Введите адрес...', text: 'Поиск',}).addTo(map);
+let map1 = new Map();
+
+map.on('pm:create', e => {
+  console.log(e);
+  coordinates_raw=e.layer["_latlngs"];
+  var coords = new Map();
+  coordinates_raw.forEach(function(item, i, coordinates_raw) {
+        coords.set(i,item["lat"]+","+item["lng"]);
+   });
+   data=JSON.stringify(mapToObj(coords));
+            $.ajax(
+            {
+              type : 'POST',
+              url : "/pipes",
+              data    :  data,
+              dataType:'json',
+              success : function(data)
+              {
+               console.log('success');
+              },
+              error: function(error) {
+                console.log(error);
+            }
+            });
+});
+
+$(".getcoords").click(function(){
+    var coords = new Map();
+    last = obj.length;
+    obj.forEach(function(item, i, obj) {
+    setTimeout(function(){
+         address = item["address_clean"]
+         var url = osmGeocoder.geocode(address);
+         var result = null;
+         var x = new XMLHttpRequest();
+         x.open("GET", url, true);
+            x.onload = function (){
+                    result=x.responseText;
+                    if (result!=null){
+                        if (x.responseText.length !=0){
+                             result = JSON.parse(result)
+                             if (result[0]["class"]=="building"){
+                                 coordinates=result[0]["lat"]+","+result[0]["lon"];
+                                 coords.set(address,coordinates);
+                             }
+                        }
+                  }
+            }
+        x.send(null);
+        if (i==(last-1)){
+            data=JSON.stringify(mapToObj(coords));
+            $.ajax(
+            {
+              type : 'POST',
+              url : "/coordinates",
+              data    :  data,
+              dataType:'json',
+              success : function(data)
+              {
+               console.log('success');
+              },
+              error: function(error) {
+                console.log(error);
+            }
+            });
+        }
+    },1800*(i+1));
+});
+});
+
+const mapToObj = m => {
+  return Array.from(m).reduce((obj, [key, value]) => {
+    obj[key] = value;
+    return obj;
+  }, {});
+};
+
+map.on('pm:remove', e => {
+ if (e.layer.options["title"]){
+    data={"address":e.layer.options["title"],"type":"device"}
+ }
+ else{
+    data={"ID":e.layer.options["className"],"type":"pipe"}
+ }
+  $.ajax(
+    {
+      type: 'POST',
+      url: "/remove",
+      data:  data,
+      dataType:'json',
+      success: function(response)
+      {
+      },
+      error: function(error) {
+        console.log(error);
+      }
+    });
+
+});
+
+{% for device in devices %}
+L.marker([{{device.coordinates}}],{icon: customIcon, title:'{{device.address_raw}}',alt:'{{device.id}}'}).addTo(map).on('click', onClick).on('dragend',onEdit);
+{% endfor %}
+
+{% for pipe in pipes %}
+L.polyline({{pipe.coordinates}},{className:'{{pipe.id}}'}).addTo(map).on('pm:edit', onEdit);
+{% endfor %}
+
+function onEdit(e){
+    if (e.type == "dragend")
+       data={"type":"Device","id":e.target.options["alt"],"coords":e.target._latlng["lat"]+";"+e.target._latlng["lng"]};
+    else{
+        crd=e.target._latlngs;
+        crd_string="[";
+        crd.forEach(function(item, i, crd) {
+            crd_string+="["+item["lat"]+";"+item["lng"]+"]";
+            if (i!=crd.length-1)
+                crd_string+=";";
+       });
+        crd_string+="]";
+        data={"type":"Pipe","id":e.target.options["className"],"coords":crd_string};
+    }
+
+     $.ajax(
+            {
+              type: 'POST',
+              url: "/update_coordinates",
+              data:  data,
+              dataType:'json',
+              success: function(response)
+              {
+              },
+              error: function(error) {
+                console.log(error);
+              }
+            });
+}
+
+function onClick(e) {
+    console.log(e['target']['options']['title']);
+    id=e['target']['options']['alt']
+    data={"id":id};
+    console.log(e);
+    $.ajax(
+            {
+              type : 'POST',
+              url : "/base",
+              data    :  data,
+              dataType:'json',
+              success : function(data)
+              {
+               if (data.length!=0){
+                show();
+                $('#info').append("<h1>"+data[0]["address"]+"</p>");
+                data.forEach(function(item, i, data) {
+                        $('#info').append("<p>"+item["dateofvalue"]+" "+item["value"]+"</p>");
+                 });
+                 $('#table_values').append("<button id=\"close\" class=\"btn btn-outline-primary\">Закрыть</button>");
+                 var chart = am4core.create("chartdiv", am4charts.XYChart);
+                 chart.data=data;
+                 var categoryAxis = chart.xAxes.push(new am4charts.DateAxis ());
+                 categoryAxis.dataFields.category = "dateofvalue";
+                 categoryAxis.title.text = "Дата передачи показаний";
+                 var valueAxis = chart.yAxes.push(new am4charts.ValueAxis());
+                 categoryAxis.dataFields.category = "value";
+                 var series = chart.series.push(new am4charts.LineSeries());
+                 series.dataFields.valueY  = "value";
+                 series.dataFields.dateX  = "dateofvalue";
+
+               }
+              },
+              error: function(error) {
+                console.log(error);
+            }
+            });
+}
+
+  $(".table_values").on("click", "#close", function() {
+        $("#table_values").empty()
+        $('#divinfo').css('display','none');
+        $("#mapdiv").attr('class', 'col-lg-12');
+    });
+
+
+    function show(e) {
+        $('#infodiv').css('display','block');
+        $("#mapdiv").attr('class', 'col-lg-8');
+    }
+
+
+
+
+</script>
+{{super()}}
+{% endblock %}
+
+
